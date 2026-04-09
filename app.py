@@ -2,8 +2,7 @@ import os, asyncio, edge_tts, requests, base64
 from datetime import datetime
 from flask import Flask, render_template, request, jsonify, send_file
 
-app = Flask(__name__)
-
+app = Flask(__name__) # سيقوم Flask بالبحث تلقائياً عن templates و static بجانب الملف
 # إعداد مجلد حفظ الصوت في Railway
 AUDIO_DIR = "static/audio"
 if not os.path.exists(AUDIO_DIR):
