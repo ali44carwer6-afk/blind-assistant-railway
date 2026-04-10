@@ -11,21 +11,55 @@ os.makedirs(AUDIO_DIR, exist_ok=True)
 API_KEY = os.getenv("OPENROUTER_API_KEY")
 sessions = {}
 
-def detect_language(text):
-    arabic_chars = len(re.findall(r'[\u0600-\u06FF]', text))
-    english_chars = len(re.findall(r'[a-zA-Z]', text))
-    return 'ar' if arabic_chars >= english_chars else 'en'
-
+# الدالة المُحدثة للتعامل مع النصوص المزدوجة (عربي + إنجليزي) وقراءتها معاً
 async def generate_audio(text, filename):
-    lang = detect_language(text)
-    if lang == 'ar':
-        voice = "ar-SA-ZariyahNeural"  # صوت عربي فصيح أكاديمي أنثوي هادئ
-        rate = "-15%"
-    else:
-        voice = "en-US-AriaNeural"     # صوت إنجليزي أنثوي جميل وواضح
-        rate = "-10%"
-    communicate = edge_tts.Communicate(text, voice, rate=rate)
-    await communicate.save(filename)
+    # 1. تقسيم النص إلى كلمات
+    words = text.split()
+    groups = []
+    current_lang = None
+    current_words = []
+    
+    # 2. تصنيف الكلمات (عربي أو إنجليزي) وتجميعها في مقاطع
+    for word in words:
+        if re.search(r'[\u0600-\u06FF]', word):
+            lang = 'ar'
+        elif re.search(r'[a-zA-Z]', word):
+            lang = 'en'
+        else:
+            # إذا كانت الكلمة عبارة عن أرقام أو رموز، نلحقها باللغة الحالية، أو العربية كافتراضي
+            lang = current_lang if current_lang else 'ar'
+            
+        if lang != current_lang:
+            if current_words:
+                groups.append((current_lang, " ".join(current_words)))
+            current_lang = lang
+            current_words = [word]
+        else:
+            current_words.append(word)
+            
+    if current_words:
+        groups.append((current_lang, " ".join(current_words)))
+        
+    # 3. توليد الصوت لكل مقطع بلغته الأصلية ودمجهم في ملف صوتي واحد
+    with open(filename, 'wb') as outfile:
+        for index, (lang, text_chunk) in enumerate(groups):
+            if lang == 'ar':
+                voice = "ar-SA-ZariyahNeural"  # صوت عربي
+                rate = "-15%"
+            else:
+                voice = "en-US-AriaNeural"     # صوت إنجليزي
+                rate = "-10%"
+            
+            temp_filename = f"{filename}_{index}.tmp"
+            communicate = edge_tts.Communicate(text_chunk, voice, rate=rate)
+            await communicate.save(temp_filename)
+            
+            # قراءة المقطع الصوتي وإضافته للملف النهائي
+            with open(temp_filename, 'rb') as infile:
+                outfile.write(infile.read())
+            
+            # تنظيف الملفات المؤقتة
+            os.remove(temp_filename)
 
 @app.route('/')
 def index():
