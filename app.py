@@ -1,4 +1,4 @@
-import os, asyncio, edge_tts, requests, base64
+import os, asyncio, edge_tts, requests, base64, re
 from datetime import datetime
 from flask import Flask, render_template, request, jsonify, send_file
 
@@ -9,9 +9,23 @@ AUDIO_DIR = "/tmp"
 os.makedirs(AUDIO_DIR, exist_ok=True)
 
 API_KEY = os.getenv("OPENROUTER_API_KEY")
-
-# تخزين المحادثات لكل جلسة
 sessions = {}
+
+def detect_language(text):
+    arabic_chars = len(re.findall(r'[\u0600-\u06FF]', text))
+    english_chars = len(re.findall(r'[a-zA-Z]', text))
+    return 'ar' if arabic_chars >= english_chars else 'en'
+
+async def generate_audio(text, filename):
+    lang = detect_language(text)
+    if lang == 'ar':
+        voice = "ar-SA-ZariyahNeural"  # صوت عربي فصيح أكاديمي أنثوي هادئ
+        rate = "-15%"
+    else:
+        voice = "en-US-AriaNeural"     # صوت إنجليزي أنثوي جميل وواضح
+        rate = "-10%"
+    communicate = edge_tts.Communicate(text, voice, rate=rate)
+    await communicate.save(filename)
 
 @app.route('/')
 def index():
@@ -33,7 +47,6 @@ def process():
         session_id = request.form.get('session_id', 'default')
         img_file = request.files.get('image')
 
-        # الرد على الوقت محلياً
         if any(k in user_query for k in ["وقت", "ساعة", "تاريخ"]):
             now = datetime.now()
             res_text = now.strftime("الساعة الآن %I:%M %p").replace("AM", "صباحاً").replace("PM", "مساءً")
@@ -48,25 +61,22 @@ def process():
             if mode == 'read':
                 sys_msg = (
                     "Role: Professional OCR Assistant. "
-                    "Task: Extract all readable text from the image. "
-                    "Language: Arabic with full diacritics (Tashkeel). "
-                    "Constraint: Strictly output only the extracted text. "
-                    "No introductions like 'The text is' and no markdown symbols."
+                    "Task: Extract all readable text from the image exactly as written. "
+                    "If the text is Arabic, output it with full diacritics (Tashkeel). "
+                    "If the text is English, output it clearly as-is. "
+                    "Constraint: Output ONLY the extracted text. "
+                    "No introductions, no explanations, no markdown symbols."
                 )
                 temp = 0.1
             else:
                 sys_msg = (
                     "Role: Expert Visual Assistant for the Blind. "
                     "Task: Describe the image comprehensively for someone who cannot see. "
-                    "Details: Describe objects, their colors, sizes, and their positions. "
-                    "Language: Fluent, warm, and clear Arabic. "
-                    "Constraint 1: DO NOT use any markdown characters like **, #, or dashes. "
-                    "Constraint 2: Ensure the text flows naturally for a screen reader/TTS. "
+                    "Language: Fluent, warm, and clear Arabic with no markdown. "
                     "Goal: Provide a full mental picture of the surroundings."
                 )
                 temp = 0.7
 
-            # إدارة المحادثات لكل مستخدم على حدة
             if session_id not in sessions or mode == 'read':
                 sessions[session_id] = [{"role": "system", "content": sys_msg}]
 
@@ -86,14 +96,12 @@ def process():
             res_text = resp.json()['choices'][0]['message']['content']
             sessions[session_id].append({"role": "assistant", "content": res_text})
 
-            # تنظيف المحادثات الطويلة (أكثر من 20 رسالة)
             if len(sessions[session_id]) > 20:
                 sessions[session_id] = sessions[session_id][:1] + sessions[session_id][-10:]
 
-        # توليد الصوت
         fname = f"v_{os.urandom(4).hex()}.mp3"
         audio_path = os.path.join(AUDIO_DIR, fname)
-        asyncio.run(edge_tts.Communicate(res_text, "ar-EG-SalmaNeural").save(audio_path))
+        asyncio.run(generate_audio(res_text, audio_path))
 
         return jsonify({'text': res_text, 'audio_url': f'/get_audio?fn={fname}'})
 
