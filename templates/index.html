@@ -3,24 +3,49 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>مساعد المكفوفين</title>
+    <title>مساعد المكفوفين الذكي</title>
     <style>
-        body, html { margin: 0; padding: 0; width: 100%; height: 100%; background: #000; overflow: hidden; font-family: sans-serif; }
-        #video { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; object-fit: cover; opacity: 0.4; z-index: 1; }
-        .container { position: relative; z-index: 2; height: 100vh; display: flex; flex-direction: column; }
-        .zone { flex: 1; display: flex; align-items: center; justify-content: center; color: white; font-size: 35px; font-weight: bold; text-align: center; cursor: pointer; -webkit-tap-highlight-color: transparent; user-select: none; }
+        body, html { 
+            margin: 0; padding: 0; width: 100%; height: 100%; 
+            background: #000; overflow: hidden; font-family: sans-serif; 
+        }
+        #video { 
+            position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; 
+            object-fit: cover; opacity: 0.4; z-index: 1; 
+        }
+        .container { 
+            position: relative; z-index: 2; height: 100vh; 
+            display: flex; flex-direction: column; 
+        }
+        .zone { 
+            flex: 1; display: flex; align-items: center; justify-content: center; 
+            color: white; font-size: 32px; font-weight: bold; text-align: center; 
+            cursor: pointer; -webkit-tap-highlight-color: transparent;
+            user-select: none;
+        }
         #read-btn { background: rgba(0, 80, 255, 0.7); border-bottom: 2px solid white; } 
         #chat-btn { background: rgba(0, 180, 80, 0.7); }
-        #status { position: absolute; top: 0; width: 100%; background: #ff3b30; color: white; text-align: center; padding: 15px; z-index: 10; display: none; font-size: 22px; }
+        #status {
+            position: absolute; top: 0; width: 100%; background: #ff3b30; 
+            color: white; text-align: center; padding: 15px; z-index: 10; 
+            display: none; font-size: 22px;
+        }
     </style>
 </head>
 <body>
     <div id="status">جاري المعالجة...</div>
     <video id="video" autoplay playsinline></video>
     <canvas id="canvas" style="display:none;"></canvas>
+
     <div class="container">
-        <div id="read-btn" class="zone" onclick="handleAction('read')">إقرأ النص</div>
-        <div id="chat-btn" class="zone" onclick="handleAction('chat')">تحدث معي</div>
+        <div id="read-btn" class="zone" 
+             onclick="handleAction('read')" 
+             role="button" tabindex="0" 
+             aria-label="إقرأ النص">إقرأ النص</div>
+        <div id="chat-btn" class="zone" 
+             onclick="handleAction('chat')" 
+             role="button" tabindex="0"
+             aria-label="تحدث معي">تحدث معي</div>
     </div>
 
     <script>
@@ -30,17 +55,27 @@
         let isProcessing = false;
         let currentAudio = null;
 
-        navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } })
-            .then(stream => { video.srcObject = stream; });
+        // معرف فريد للجلسة
+        const sessionId = Math.random().toString(36).substr(2, 9);
 
-        function stopAudio() {
-            if (currentAudio) { currentAudio.pause(); currentAudio.currentTime = 0; }
+        // تشغيل الكاميرا
+        navigator.mediaDevices.getUserMedia({ 
+            video: { facingMode: "environment" } 
+        })
+        .then(stream => { video.srcObject = stream; })
+        .catch(() => alert("يرجى السماح بالوصول للكاميرا"));
+
+        function stopAllAudio() {
+            if (currentAudio) {
+                currentAudio.pause();
+                currentAudio.currentTime = 0;
+            }
             window.speechSynthesis.cancel();
         }
 
         function feedback(text, vibTime, onComplete = null) {
-            stopAudio();
-            if(navigator.vibrate) navigator.vibrate(vibTime);
+            if (navigator.vibrate) navigator.vibrate(vibTime);
+            stopAllAudio();
             const msg = new SpeechSynthesisUtterance(text);
             msg.lang = 'ar-SA';
             if (onComplete) msg.onend = onComplete;
@@ -49,40 +84,69 @@
 
         function handleAction(mode) {
             if (isProcessing) return;
+
             if (mode === 'read') {
-                feedback("جاري تصوير النص", 100, () => sendData('read', ''));
+                feedback("جاري تصوير النص لقراءته", 100, () => {
+                    sendData('read', '');
+                });
             } else {
                 feedback("أنا أسمعك، تفضل بسؤالك", 200, () => {
                     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+                    if (!SpeechRecognition) {
+                        feedback("متصفحك لا يدعم التعرف على الصوت", 50);
+                        return;
+                    }
                     const rec = new SpeechRecognition();
                     rec.lang = 'ar-SA';
                     rec.onresult = (e) => sendData('chat', e.results[0][0].transcript);
+                    rec.onerror = () => feedback("لم أسمعك، حاول مرة أخرى", 50);
                     rec.start();
                 });
             }
         }
 
+        // دعم لوحة المفاتيح
+        document.querySelectorAll('.zone').forEach(btn => {
+            btn.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter' || e.key === ' ') btn.click();
+            });
+        });
+
         function sendData(mode, query) {
             isProcessing = true;
             statusBox.style.display = 'block';
+            statusBox.innerText = mode === 'read' ? "جاري استخراج النص..." : "جاري البحث عن إجابة...";
+
+            const context = canvas.getContext('2d');
             canvas.width = video.videoWidth;
             canvas.height = video.videoHeight;
-            canvas.getContext('2d').drawImage(video, 0, 0);
+            context.drawImage(video, 0, 0);
+
             canvas.toBlob(blob => {
                 const formData = new FormData();
                 formData.append('image', blob, 'img.jpg');
                 formData.append('mode', mode);
                 formData.append('query', query);
+                formData.append('session_id', sessionId);
+
                 fetch('/process', { method: 'POST', body: formData })
                 .then(res => res.json())
                 .then(data => {
                     if (data.audio_url) {
-                        stopAudio();
+                        stopAllAudio();
                         currentAudio = new Audio(data.audio_url);
-                        currentAudio.onplay = () => statusBox.style.display = 'none';
+                        currentAudio.onplay = () => { statusBox.style.display = 'none'; };
                         currentAudio.play();
+                    } else if (data.error) {
+                        statusBox.style.display = 'none';
+                        feedback("حدث خطأ، حاول مرة أخرى", 50);
                     }
-                }).finally(() => isProcessing = false);
+                })
+                .catch(() => {
+                    statusBox.style.display = 'none';
+                    feedback("خطأ في الاتصال بالخادم", 50);
+                })
+                .finally(() => { isProcessing = false; });
             }, 'image/jpeg', 0.6);
         }
     </script>
